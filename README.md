@@ -53,5 +53,5 @@ All actions are logged into `internet_boost.log` for easy tracking.
 Use this script at your own risk. It is optimized for performance but might not be ideal for all systems or networks. Always monitor your network behavior after applying changes.
 
 ---
-Made with 💻 and 🧠 for power users.
+
 
