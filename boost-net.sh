@@ -16,8 +16,12 @@ echo "إجراء: $action" | tee -a "$LOGFILE"
 install_pkg(){ dpkg -s "$1" &>/dev/null || sudo apt-get install -y "$1"; }
 
 apply_optimizations() {
+  LOGFILE="/var/log/net_optimize.log"
   IFACE=$(ip route | awk '/default/ {print $5; exit}')
   DRIVER=$(basename "$(readlink -f /sys/class/net/$IFACE/device/driver)")
+  
+  echo "بدأ تطبيق التحسينات للشبكة في: $(date)" >> "$LOGFILE"
+  
   # إنشاء مجلدات التكوين وتعديل إعدادات NetworkManager
   sudo mkdir -p /etc/NetworkManager/conf.d
   sudo tee /etc/NetworkManager/conf.d/wifi-powersave-off.conf >/dev/null <<EOF
@@ -25,45 +29,48 @@ apply_optimizations() {
 wifi.powersave = 2
 EOF
   if ! sudo systemctl restart NetworkManager; then
-    echo "⚠️ فشل إعادة تشغيل NetworkManager، محاولة لإعادة تشغيله مرة أخرى..."
-    sudo systemctl restart NetworkManager  fi
+    echo "⚠️ فشل إعادة تشغيل NetworkManager، محاولة لإعادة تشغيله مرة أخرى..." >> "$LOGFILE"
+    sudo systemctl restart NetworkManager
+  fi
+
   # ضبط MTU وحلقات RX/TX
   if ! sudo ip link set "$IFACE" mtu 1400; then
-    echo "⚠️ فشل ضبط MTU، محاولة أخرى..."
+    echo "⚠️ فشل ضبط MTU، محاولة أخرى..." >> "$LOGFILE"
     sudo ip link set "$IFACE" mtu 1400
   fi
   if ! sudo ethtool -G "$IFACE" rx 8192 tx 8192; then
-    echo "⚠️ فشل ضبط حلقات RX/TX، محاولة أخرى..."
+    echo "⚠️ فشل ضبط حلقات RX/TX، محاولة أخرى..." >> "$LOGFILE"
     sudo ethtool -G "$IFACE" rx 8192 tx 8192
   fi
   # ضبط offloading
   if ! sudo ethtool -K "$IFACE" tso on gso on gro on; then
-    echo "⚠️ فشل ضبط offloading، محاولة أخرى..."
+    echo "⚠️ فشل ضبط offloading، محاولة أخرى..." >> "$LOGFILE"
     sudo ethtool -K "$IFACE" tso on gso on gro on
   fi
   # ضبط txqueuelen
   if ! sudo ip link set dev "$IFACE" txqueuelen 2000; then
-    echo "⚠️ فشل ضبط txqueuelen، محاولة أخرى..."
+    echo "⚠️ فشل ضبط txqueuelen، محاولة أخرى..." >> "$LOGFILE"
     sudo ip link set dev "$IFACE" txqueuelen 2000
   fi
+
   # ضبط rps_cpus
   if ! echo ffff | sudo tee /sys/class/net/$IFACE/queues/rx-0/rps_cpus >/dev/null; then
-    echo "⚠️ فشل ضبط rps_cpus، محاولة أخرى..."
+    echo "⚠️ فشل ضبط rps_cpus، محاولة أخرى..." >> "$LOGFILE"
     echo ffff | sudo tee /sys/class/net/$IFACE/queues/rx-0/rps_cpus >/dev/null
   fi
-  # محاولة ضبط coalesce فقط إذا كانت مدعومة
+  # ضبط coalesce فقط إذا كانت مدعومة
   if sudo ethtool -c "$IFACE" | grep -q 'Coalesce parameters'; then
     if ! sudo ethtool -C "$IFACE" rx-usecs 5 tx-usecs 5; then
-      echo "⚠️ فشل ضبط coalesce، محاولة أخرى..."
+      echo "⚠️ فشل ضبط coalesce، محاولة أخرى..." >> "$LOGFILE"
       sudo ethtool -C "$IFACE" rx-usecs 5 tx-usecs 5
     fi
   else
-    echo "⚠️ coalesce غير مدعوم على الواجهة $IFACE"
+    echo "⚠️ coalesce غير مدعوم على الواجهة $IFACE" >> "$LOGFILE"
   fi
   # إعادة تحميل driver لضمان عدم تفعيل وضع الطاقة
   sudo modprobe -r "$DRIVER" 2>/dev/null || true
   if ! sudo modprobe "$DRIVER" power_save=0 2>/dev/null; then
-    echo "⚠️ فشل إعادة تحميل driver، محاولة أخرى..."
+    echo "⚠️ فشل إعادة تحميل driver، محاولة أخرى..." >> "$LOGFILE"
     sudo modprobe "$DRIVER" power_save=0 2>/dev/null
   fi
   # ضبط إعدادات sysctl
@@ -88,7 +95,7 @@ net.core.busy_read=50
 net.core.rps_sock_flow_entries=32768
 EOF
   if ! sudo sysctl --system; then
-    echo "⚠️ فشل تطبيق sysctl، محاولة أخرى..."
+    echo "⚠️ فشل تطبيق sysctl، محاولة أخرى..." >> "$LOGFILE"
     sudo sysctl --system
   fi
   # ضبط DNS على Cloudflare وGoogle
@@ -101,23 +108,25 @@ DNSSEC=no
 Cache=yes
 EOF
   if ! sudo systemctl restart systemd-resolved; then
-    echo "⚠️ فشل إعادة تشغيل systemd-resolved، محاولة أخرى..."
+    echo "⚠️ فشل إعادة تشغيل systemd-resolved، محاولة أخرى..." >> "$LOGFILE"
     sudo systemctl restart systemd-resolved
   fi
   sudo systemd-resolve --flush-caches 2>/dev/null || true
   # تثبيت speedtest-cli واختبار السرعة
   if ! command -v speedtest-cli >/dev/null; then
     if ! sudo apt install -y speedtest-cli; then
-      echo "⚠️ فشل تثبيت speedtest-cli، محاولة أخرى..."
+      echo "⚠️ فشل تثبيت speedtest-cli، محاولة أخرى..." >> "$LOGFILE"
       sudo apt install -y speedtest-cli
     fi
   fi
   if ! speedtest-cli --secure; then
-    echo "⚠️ فشل اختبار السرعة، محاولة أخرى..."
+    echo "⚠️ فشل اختبار السرعة، محاولة أخرى..." >> "$LOGFILE"
     speedtest-cli --secure
   fi
-  echo "✅ تم تطبيق التسريع بنجاح"
+  echo "✅ تم تطبيق التسريع بنجاح" >> "$LOGFILE"
 }
+
+
 
 
 
