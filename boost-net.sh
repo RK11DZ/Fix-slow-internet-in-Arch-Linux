@@ -36,8 +36,6 @@ EOF
   sudo modprobe "$DRIVER" power_save=0 2>/dev/null || true
   sudo systemctl enable irqbalance.service
   sudo systemctl start irqbalance.service || echo "⚠️ فشل تشغيل irqbalance"
-}
-
 
   sudo tee /etc/sysctl.d/99-net-optimize.conf >/dev/null <<EOF
 net.core.default_qdisc=fq
