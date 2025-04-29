@@ -18,29 +18,55 @@ install_pkg(){ dpkg -s "$1" &>/dev/null || sudo apt-get install -y "$1"; }
 apply_optimizations() {
   IFACE=$(ip route | awk '/default/ {print $5; exit}')
   DRIVER=$(basename "$(readlink -f /sys/class/net/$IFACE/device/driver)")
-
+  # إنشاء مجلدات التكوين وتعديل إعدادات NetworkManager
   sudo mkdir -p /etc/NetworkManager/conf.d
   sudo tee /etc/NetworkManager/conf.d/wifi-powersave-off.conf >/dev/null <<EOF
 [connection]
 wifi.powersave = 2
 EOF
-  sudo systemctl restart NetworkManager || echo "⚠️ تعذر إعادة تشغيل NetworkManager"
-
-  sudo ip link set "$IFACE" mtu 1400 || echo "⚠️ فشل ضبط MTU"
-  sudo ethtool -G "$IFACE" rx 8192 tx 8192 || echo "⚠️ فشل ضبط RX/TX"
-  sudo ethtool -K "$IFACE" tso on gso on gro on || echo "⚠️ فشل ضبط offloading"
-  sudo ip link set dev "$IFACE" txqueuelen 2000 || echo "⚠️ فشل ضبط txqueuelen"
-  echo ffff | sudo tee /sys/class/net/$IFACE/queues/rx-0/rps_cpus >/dev/null || echo "⚠️ فشل ضبط rps_cpus"
-  # التحقق من دعم coalesce قبل تطبيقه
+  if ! sudo systemctl restart NetworkManager; then
+    echo "⚠️ فشل إعادة تشغيل NetworkManager، محاولة لإعادة تشغيله مرة أخرى..."
+    sudo systemctl restart NetworkManager  fi
+  # ضبط MTU وحلقات RX/TX
+  if ! sudo ip link set "$IFACE" mtu 1400; then
+    echo "⚠️ فشل ضبط MTU، محاولة أخرى..."
+    sudo ip link set "$IFACE" mtu 1400
+  fi
+  if ! sudo ethtool -G "$IFACE" rx 8192 tx 8192; then
+    echo "⚠️ فشل ضبط حلقات RX/TX، محاولة أخرى..."
+    sudo ethtool -G "$IFACE" rx 8192 tx 8192
+  fi
+  # ضبط offloading
+  if ! sudo ethtool -K "$IFACE" tso on gso on gro on; then
+    echo "⚠️ فشل ضبط offloading، محاولة أخرى..."
+    sudo ethtool -K "$IFACE" tso on gso on gro on
+  fi
+  # ضبط txqueuelen
+  if ! sudo ip link set dev "$IFACE" txqueuelen 2000; then
+    echo "⚠️ فشل ضبط txqueuelen، محاولة أخرى..."
+    sudo ip link set dev "$IFACE" txqueuelen 2000
+  fi
+  # ضبط rps_cpus
+  if ! echo ffff | sudo tee /sys/class/net/$IFACE/queues/rx-0/rps_cpus >/dev/null; then
+    echo "⚠️ فشل ضبط rps_cpus، محاولة أخرى..."
+    echo ffff | sudo tee /sys/class/net/$IFACE/queues/rx-0/rps_cpus >/dev/null
+  fi
+  # محاولة ضبط coalesce فقط إذا كانت مدعومة
   if sudo ethtool -c "$IFACE" | grep -q 'Coalesce parameters'; then
-    sudo ethtool -C "$IFACE" rx-usecs 5 tx-usecs 5 || echo "⚠️ فشل ضبط coalesce"
+    if ! sudo ethtool -C "$IFACE" rx-usecs 5 tx-usecs 5; then
+      echo "⚠️ فشل ضبط coalesce، محاولة أخرى..."
+      sudo ethtool -C "$IFACE" rx-usecs 5 tx-usecs 5
+    fi
   else
     echo "⚠️ coalesce غير مدعوم على الواجهة $IFACE"
   fi
-
+  # إعادة تحميل driver لضمان عدم تفعيل وضع الطاقة
   sudo modprobe -r "$DRIVER" 2>/dev/null || true
-  sudo modprobe "$DRIVER" power_save=0 2>/dev/null || true
-
+  if ! sudo modprobe "$DRIVER" power_save=0 2>/dev/null; then
+    echo "⚠️ فشل إعادة تحميل driver، محاولة أخرى..."
+    sudo modprobe "$DRIVER" power_save=0 2>/dev/null
+  fi
+  # ضبط إعدادات sysctl
   sudo tee /etc/sysctl.d/99-net-optimize.conf >/dev/null <<EOF
 net.core.default_qdisc=fq
 net.ipv4.tcp_congestion_control=bbr
@@ -61,8 +87,11 @@ net.core.busy_poll=50
 net.core.busy_read=50
 net.core.rps_sock_flow_entries=32768
 EOF
-  sudo sysctl --system || echo "⚠️ فشل تطبيق sysctl"
-
+  if ! sudo sysctl --system; then
+    echo "⚠️ فشل تطبيق sysctl، محاولة أخرى..."
+    sudo sysctl --system
+  fi
+  # ضبط DNS على Cloudflare وGoogle
   sudo mkdir -p /etc/systemd/resolved.conf.d
   sudo tee /etc/systemd/resolved.conf.d/dns.conf >/dev/null <<EOF
 [Resolve]
@@ -71,19 +100,26 @@ FallbackDNS=1.0.0.1 8.8.4.4
 DNSSEC=no
 Cache=yes
 EOF
-
-  if systemctl is-active --quiet systemd-resolved; then
-    sudo systemctl restart systemd-resolved || echo "⚠️ فشل إعادة تشغيل systemd-resolved"
-    sudo systemd-resolve --flush-caches 2>/dev/null || true
-  else
-    sudo resolvectl dns "$IFACE" 1.1.1.1 8.8.8.8
+  if ! sudo systemctl restart systemd-resolved; then
+    echo "⚠️ فشل إعادة تشغيل systemd-resolved، محاولة أخرى..."
+    sudo systemctl restart systemd-resolved
   fi
-
-  command -v speedtest-cli >/dev/null || sudo apt install -y speedtest-cli || echo "⚠️ تعذر تثبيت speedtest-cli"
-  speedtest-cli --secure || echo "⚠️ فشل اختبار السرعة"
-
+  sudo systemd-resolve --flush-caches 2>/dev/null || true
+  # تثبيت speedtest-cli واختبار السرعة
+  if ! command -v speedtest-cli >/dev/null; then
+    if ! sudo apt install -y speedtest-cli; then
+      echo "⚠️ فشل تثبيت speedtest-cli، محاولة أخرى..."
+      sudo apt install -y speedtest-cli
+    fi
+  fi
+  if ! speedtest-cli --secure; then
+    echo "⚠️ فشل اختبار السرعة، محاولة أخرى..."
+    speedtest-cli --secure
+  fi
   echo "✅ تم تطبيق التسريع بنجاح"
 }
+
+
 
 revert_optimizations(){
   sudo ip link set "$IFACE" mtu 1500
