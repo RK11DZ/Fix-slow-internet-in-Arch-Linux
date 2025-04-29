@@ -15,16 +15,9 @@ echo "إجراء: $action" | tee -a "$LOGFILE"
 
 install_pkg(){ dpkg -s "$1" &>/dev/null || sudo apt-get install -y "$1"; }
 
-
 apply_optimizations() {
-  IFACE=$(ip route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++){if($i=="dev"){print $(i+1);exit}}}')
-  if [[ -z "$IFACE" ]]; then
-    echo "❌ تعذر تحديد واجهة الإنترنت. تأكد من أنك متصل بالشبكة."
-    exit 1
-  fi
-
+  IFACE=$(ip route | awk '/default/ {print $5; exit}')
   DRIVER=$(basename "$(readlink -f /sys/class/net/$IFACE/device/driver)")
-  LOGFILE="net-boost.log"
 
   sudo mkdir -p /etc/NetworkManager/conf.d
   sudo tee /etc/NetworkManager/conf.d/wifi-powersave-off.conf >/dev/null <<EOF
@@ -34,18 +27,13 @@ EOF
   sudo systemctl restart NetworkManager || echo "⚠️ تعذر إعادة تشغيل NetworkManager"
 
   sudo ip link set "$IFACE" mtu 1400 || echo "⚠️ فشل ضبط MTU"
-  sudo ethtool -G "$IFACE" rx 4096 tx 4096 || echo "⚠️ فشل ضبط حلقات RX/TX"
+  sudo ethtool -G "$IFACE" rx 8192 tx 8192 || echo "⚠️ فشل ضبط RX/TX"
   sudo ethtool -K "$IFACE" tso on gso on gro on || echo "⚠️ فشل ضبط offloading"
   sudo ip link set dev "$IFACE" txqueuelen 2000 || echo "⚠️ فشل ضبط txqueuelen"
   echo ffff | sudo tee /sys/class/net/$IFACE/queues/rx-0/rps_cpus >/dev/null || echo "⚠️ فشل ضبط rps_cpus"
+  sudo ethtool -C "$IFACE" rx-usecs 5 tx-usecs 5 || echo "⚠️ فشل ضبط coalesce"
   sudo modprobe -r "$DRIVER" 2>/dev/null || true
   sudo modprobe "$DRIVER" power_save=0 2>/dev/null || true
-
-  if ! systemctl list-unit-files | grep -q irqbalance; then
-    sudo apt install -y irqbalance
-  fi
-  sudo systemctl enable irqbalance.service
-  sudo systemctl start irqbalance.service || echo "⚠️ فشل تشغيل irqbalance"
 
   sudo tee /etc/sysctl.d/99-net-optimize.conf >/dev/null <<EOF
 net.core.default_qdisc=fq
@@ -72,22 +60,25 @@ EOF
   sudo mkdir -p /etc/systemd/resolved.conf.d
   sudo tee /etc/systemd/resolved.conf.d/dns.conf >/dev/null <<EOF
 [Resolve]
-DNS=1.1.1.1 9.9.9.9 8.8.8.8
+DNS=1.1.1.1 8.8.8.8
 FallbackDNS=1.0.0.1 8.8.4.4
-DNSSEC=yes
+DNSSEC=no
 Cache=yes
 EOF
-  sudo systemctl enable systemd-resolved.service
-  sudo systemctl restart systemd-resolved.service || echo "⚠️ فشل إعادة تشغيل systemd-resolved"
-  sudo systemd-resolve --flush-caches 2>/dev/null || true
 
-  if ! command -v speedtest-cli &>/dev/null; then
-    sudo apt install -y speedtest-cli
+  if systemctl is-active --quiet systemd-resolved; then
+    sudo systemctl restart systemd-resolved || echo "⚠️ فشل إعادة تشغيل systemd-resolved"
+    sudo systemd-resolve --flush-caches 2>/dev/null || true
+  else
+    sudo resolvectl dns "$IFACE" 1.1.1.1 8.8.8.8
   fi
 
-  speedtest-cli || echo "⚠️ فشل اختبار السرعة"
-  echo "✅ تم تطبيق تسريع الإنترنت بنجاح." | tee -a "$LOGFILE"
+  command -v speedtest-cli >/dev/null || sudo apt install -y speedtest-cli || echo "⚠️ تعذر تثبيت speedtest-cli"
+  speedtest-cli --secure || echo "⚠️ فشل اختبار السرعة"
+
+  echo "✅ تم تطبيق التسريع بنجاح"
 }
+
 revert_optimizations(){
   sudo ip link set "$IFACE" mtu 1500
   sudo ethtool -G "$IFACE" rx 256 tx 256
