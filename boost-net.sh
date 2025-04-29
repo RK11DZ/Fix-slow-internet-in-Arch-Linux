@@ -83,4 +83,3 @@ revert_optimizations(){
 }
 
 [[ "$action" == "apply" ]] && apply_optimizations || revert_optimizations
-
