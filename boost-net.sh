@@ -15,17 +15,29 @@ echo "إجراء: $action" | tee -a "$LOGFILE"
 
 install_pkg(){ dpkg -s "$1" &>/dev/null || sudo apt-get install -y "$1"; }
 
-apply_optimizations(){
-  command -v iwconfig &>/dev/null && sudo iwconfig "$IFACE" power off || echo "iwconfig غير متوفر"
-  sudo ip link set "$IFACE" mtu 1400 || echo "فشل ضبط MTU"
-  sudo ethtool -G "$IFACE" rx 8192 tx 8192 || echo "فشل ضبط حلقات RX/TX"
-  sudo ethtool -K "$IFACE" tso on gso on gro on || echo "فشل ضبط offloading"
-  sudo ip link set dev "$IFACE" txqueuelen 2000 || echo "فشل ضبط طول قائمة الإرسال"
-  echo ffff | sudo tee /sys/class/net/$IFACE/queues/rx-0/rps_cpus >/dev/null || true
-  sudo ethtool -C "$IFACE" rx-usecs 5 tx-usecs 5 || echo "فشل ضبط coalesce"
-  sudo modprobe -r $DRIVER 2>/dev/null || true
-  sudo modprobe $DRIVER power_save=0 2>/dev/null || true
-  sudo systemctl enable irqbalance.service && sudo systemctl start irqbalance.service
+apply_optimizations() {
+  IFACE=$(ip route | awk '/default/ {print $5; exit}')
+  DRIVER=$(basename "$(readlink -f /sys/class/net/$IFACE/device/driver)")
+
+  sudo mkdir -p /etc/NetworkManager/conf.d
+  sudo tee /etc/NetworkManager/conf.d/wifi-powersave-off.conf >/dev/null <<EOF
+[connection]
+wifi.powersave = 2
+EOF
+  sudo systemctl restart NetworkManager || echo "⚠️ تعذر إعادة تشغيل NetworkManager"
+
+  sudo ip link set "$IFACE" mtu 1400 || echo "⚠️ فشل ضبط MTU"
+  sudo ethtool -G "$IFACE" rx 8192 tx 8192 || echo "⚠️ فشل ضبط حلقات RX/TX"
+  sudo ethtool -K "$IFACE" tso on gso on gro on || echo "⚠️ فشل ضبط offloading"
+  sudo ip link set dev "$IFACE" txqueuelen 2000 || echo "⚠️ فشل ضبط txqueuelen"
+  echo ffff | sudo tee /sys/class/net/$IFACE/queues/rx-0/rps_cpus >/dev/null || echo "⚠️ فشل ضبط rps_cpus"
+  sudo ethtool -C "$IFACE" rx-usecs 5 tx-usecs 5 || echo "⚠️ فشل ضبط coalesce"
+  sudo modprobe -r "$DRIVER" 2>/dev/null || true
+  sudo modprobe "$DRIVER" power_save=0 2>/dev/null || true
+  sudo systemctl enable irqbalance.service
+  sudo systemctl start irqbalance.service || echo "⚠️ فشل تشغيل irqbalance"
+}
+
 
   sudo tee /etc/sysctl.d/99-net-optimize.conf >/dev/null <<EOF
 net.core.default_qdisc=fq
