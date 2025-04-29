@@ -22,7 +22,7 @@ This script (`boost-net.sh`) provides an advanced and automated way to optimize 
 ## 📦 Requirements
 
 - Linux system (tested on Arch, Debian, Ubuntu)
-- `ethtool`, `iwconfig`, `speedtest-cli`, `lshw`, `systemd`
+- `ethtool`, `speedtest-cli`, `lshw`, `systemd`
 
 Install requirements on Arch:
 ```bash
