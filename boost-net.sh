@@ -79,7 +79,6 @@ EOF
 }
 
 revert_optimizations(){
-  command -v iwconfig &>/dev/null && sudo iwconfig "$IFACE" power on
   sudo ip link set "$IFACE" mtu 1500
   sudo ethtool -G "$IFACE" rx 256 tx 256
   sudo ethtool -K "$IFACE" tso off gso off gro off
