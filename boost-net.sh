@@ -15,10 +15,14 @@ echo "إجراء: $action" | tee -a "$LOGFILE"
 
 install_pkg(){ dpkg -s "$1" &>/dev/null || sudo apt-get install -y "$1"; }
 
-#!/bin/bash
 
 apply_optimizations() {
-  IFACE=$(ip route | awk '/default/ {print $5; exit}')
+  IFACE=$(ip route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++){if($i=="dev"){print $(i+1);exit}}}')
+  if [[ -z "$IFACE" ]]; then
+    echo "❌ تعذر تحديد واجهة الإنترنت. تأكد من أنك متصل بالشبكة."
+    exit 1
+  fi
+
   DRIVER=$(basename "$(readlink -f /sys/class/net/$IFACE/device/driver)")
   LOGFILE="net-boost.log"
 
@@ -34,7 +38,6 @@ EOF
   sudo ethtool -K "$IFACE" tso on gso on gro on || echo "⚠️ فشل ضبط offloading"
   sudo ip link set dev "$IFACE" txqueuelen 2000 || echo "⚠️ فشل ضبط txqueuelen"
   echo ffff | sudo tee /sys/class/net/$IFACE/queues/rx-0/rps_cpus >/dev/null || echo "⚠️ فشل ضبط rps_cpus"
-  sudo ethtool -C "$IFACE" rx-usecs 10 tx-usecs 10 || echo "⚠️ فشل ضبط coalesce"
   sudo modprobe -r "$DRIVER" 2>/dev/null || true
   sudo modprobe "$DRIVER" power_save=0 2>/dev/null || true
 
@@ -85,7 +88,6 @@ EOF
   speedtest-cli || echo "⚠️ فشل اختبار السرعة"
   echo "✅ تم تطبيق تسريع الإنترنت بنجاح." | tee -a "$LOGFILE"
 }
-
 revert_optimizations(){
   sudo ip link set "$IFACE" mtu 1500
   sudo ethtool -G "$IFACE" rx 256 tx 256
