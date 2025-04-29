@@ -15,30 +15,36 @@ echo "إجراء: $action" | tee -a "$LOGFILE"
 
 install_pkg(){ dpkg -s "$1" &>/dev/null || sudo apt-get install -y "$1"; }
 
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
+BLUE='\033[0;34m'
+NC='\033[0m'  # Reset color
+
 apply_optimizations() {
   LOGFILE="/var/log/net_optimize.log"
   IFACE=$(ip route | awk '/default/ {print $5; exit}')
   DRIVER=$(basename "$(readlink -f /sys/class/net/$IFACE/device/driver)")
 
   if [ -z "$IFACE" ]; then
-    echo "⚠️ لم يتم العثور على واجهة الشبكة الافتراضية" >> "$LOGFILE"
+    echo -e "${RED}⚠️ لم يتم العثور على واجهة الشبكة الافتراضية${NC}" >> "$LOGFILE"
     return 1
   fi
 
-  echo "بدأ تطبيق التحسينات للشبكة في: $(date)" >> "$LOGFILE"
+  echo -e "${BLUE}بدأ تطبيق التحسينات للشبكة في: $(date)${NC}" >> "$LOGFILE"
 
   if ! command -v sudo >/dev/null; then
-    echo "⚠️ sudo غير مثبت" >> "$LOGFILE"
+    echo -e "${RED}⚠️ sudo غير مثبت${NC}" >> "$LOGFILE"
     return 1
   fi
 
   if ! command -v ip >/dev/null; then
-    echo "⚠️ ip غير مثبت" >> "$LOGFILE"
+    echo -e "${RED}⚠️ ip غير مثبت${NC}" >> "$LOGFILE"
     return 1
   fi
 
   if ! command -v ethtool >/dev/null; then
-    echo "⚠️ ethtool غير مثبت" >> "$LOGFILE"
+    echo -e "${RED}⚠️ ethtool غير مثبت${NC}" >> "$LOGFILE"
     return 1
   fi
 
@@ -48,55 +54,55 @@ apply_optimizations() {
 wifi.powersave = 2
 EOF
   then
-    echo "⚠️ فشل في إنشاء ملف التكوين لـ NetworkManager" >> "$LOGFILE"
+    echo -e "${RED}⚠️ فشل في إنشاء ملف التكوين لـ NetworkManager${NC}" >> "$LOGFILE"
     return 1
   fi
 
   if ! sudo systemctl restart NetworkManager; then
-    echo "⚠️ فشل إعادة تشغيل NetworkManager" >> "$LOGFILE"
+    echo -e "${RED}⚠️ فشل إعادة تشغيل NetworkManager${NC}" >> "$LOGFILE"
     return 1
   fi
 
   if ! sudo ip link set "$IFACE" mtu 1400; then
-    echo "⚠️ فشل ضبط MTU" >> "$LOGFILE"
+    echo -e "${RED}⚠️ فشل ضبط MTU${NC}" >> "$LOGFILE"
     return 1
   fi
 
   if ! sudo ethtool -G "$IFACE" rx 8192 tx 8192; then
-    echo "⚠️ فشل ضبط حلقات RX/TX" >> "$LOGFILE"
+    echo -e "${RED}⚠️ فشل ضبط حلقات RX/TX${NC}" >> "$LOGFILE"
     return 1
   fi
 
   if ! sudo ethtool -K "$IFACE" tso on gso on gro on; then
-    echo "⚠️ فشل ضبط offloading" >> "$LOGFILE"
+    echo -e "${RED}⚠️ فشل ضبط offloading${NC}" >> "$LOGFILE"
     return 1
   fi
 
   if ! sudo ip link set dev "$IFACE" txqueuelen 2000; then
-    echo "⚠️ فشل ضبط txqueuelen" >> "$LOGFILE"
+    echo -e "${RED}⚠️ فشل ضبط txqueuelen${NC}" >> "$LOGFILE"
     return 1
   fi
 
   if ! echo ffff | sudo tee /sys/class/net/$IFACE/queues/rx-0/rps_cpus >/dev/null; then
-    echo "⚠️ فشل ضبط rps_cpus" >> "$LOGFILE"
+    echo -e "${RED}⚠️ فشل ضبط rps_cpus${NC}" >> "$LOGFILE"
     return 1
   fi
 
   if sudo ethtool -c "$IFACE" | grep -q 'Coalesce parameters'; then
     if ! sudo ethtool -C "$IFACE" rx-usecs 5 tx-usecs 5; then
-      echo "⚠️ فشل ضبط coalesce" >> "$LOGFILE"
+      echo -e "${RED}⚠️ فشل ضبط coalesce${NC}" >> "$LOGFILE"
       return 1
     fi
   else
-    echo "⚠️ coalesce غير مدعوم على الواجهة $IFACE" >> "$LOGFILE"
+    echo -e "${YELLOW}⚠️ coalesce غير مدعوم على الواجهة $IFACE${NC}" >> "$LOGFILE"
   fi
 
   if ! sudo modprobe -r "$DRIVER" 2>/dev/null; then
-    echo "⚠️ فشل إزالة driver" >> "$LOGFILE"
+    echo -e "${RED}⚠️ فشل إزالة driver${NC}" >> "$LOGFILE"
   fi
 
   if ! sudo modprobe "$DRIVER" power_save=0 2>/dev/null; then
-    echo "⚠️ فشل إعادة تحميل driver" >> "$LOGFILE"
+    echo -e "${RED}⚠️ فشل إعادة تحميل driver${NC}" >> "$LOGFILE"
     return 1
   fi
 
@@ -121,7 +127,7 @@ net.core.busy_read=50
 net.core.rps_sock_flow_entries=32768
 EOF
   if ! sudo sysctl --system; then
-    echo "⚠️ فشل تطبيق sysctl" >> "$LOGFILE"
+    echo -e "${RED}⚠️ فشل تطبيق sysctl${NC}" >> "$LOGFILE"
     return 1
   fi
 
@@ -134,12 +140,12 @@ DNSSEC=no
 Cache=yes
 EOF
   then
-    echo "⚠️ فشل في ضبط DNS" >> "$LOGFILE"
+    echo -e "${RED}⚠️ فشل في ضبط DNS${NC}" >> "$LOGFILE"
     return 1
   fi
 
   if ! sudo systemctl restart systemd-resolved; then
-    echo "⚠️ فشل إعادة تشغيل systemd-resolved" >> "$LOGFILE"
+    echo -e "${RED}⚠️ فشل إعادة تشغيل systemd-resolved${NC}" >> "$LOGFILE"
     return 1
   fi
 
@@ -147,17 +153,17 @@ EOF
 
   if ! command -v speedtest-cli >/dev/null; then
     if ! sudo apt install -y speedtest-cli; then
-      echo "⚠️ فشل تثبيت speedtest-cli" >> "$LOGFILE"
+      echo -e "${RED}⚠️ فشل تثبيت speedtest-cli${NC}" >> "$LOGFILE"
       return 1
     fi
   fi
 
   if ! speedtest-cli --secure; then
-    echo "⚠️ فشل اختبار السرعة" >> "$LOGFILE"
+    echo -e "${RED}⚠️ فشل اختبار السرعة${NC}" >> "$LOGFILE"
     return 1
   fi
 
-  echo "✅ تم تطبيق التسريع بنجاح" >> "$LOGFILE"
+  echo -e "${GREEN}✅ تم تطبيق التسريع بنجاح${NC}" >> "$LOGFILE"
 }
 
 revert_optimizations(){
