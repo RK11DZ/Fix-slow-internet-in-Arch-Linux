@@ -31,7 +31,13 @@ EOF
   sudo ethtool -K "$IFACE" tso on gso on gro on || echo "⚠️ فشل ضبط offloading"
   sudo ip link set dev "$IFACE" txqueuelen 2000 || echo "⚠️ فشل ضبط txqueuelen"
   echo ffff | sudo tee /sys/class/net/$IFACE/queues/rx-0/rps_cpus >/dev/null || echo "⚠️ فشل ضبط rps_cpus"
-  sudo ethtool -C "$IFACE" rx-usecs 5 tx-usecs 5 || echo "⚠️ فشل ضبط coalesce"
+  # التحقق من دعم coalesce قبل تطبيقه
+  if sudo ethtool -c "$IFACE" | grep -q 'Coalesce parameters'; then
+    sudo ethtool -C "$IFACE" rx-usecs 5 tx-usecs 5 || echo "⚠️ فشل ضبط coalesce"
+  else
+    echo "⚠️ coalesce غير مدعوم على الواجهة $IFACE"
+  fi
+
   sudo modprobe -r "$DRIVER" 2>/dev/null || true
   sudo modprobe "$DRIVER" power_save=0 2>/dev/null || true
 
